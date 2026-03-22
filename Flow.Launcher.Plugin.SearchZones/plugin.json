@@ -1,0 +1,12 @@
+{
+    "ID": "6F84CC74D30945B280A6F567228A5F89",
+    "ActionKeyword": "sz",
+    "Name": "SearchZones",
+    "Description": "Search spaces with folder-scoped presets, quick commands, and plugin actions for Flow Launcher",
+    "Author": "suly520",
+    "Version": "1.0.0",
+    "Language": "csharp",
+    "Website": "https://github.com/suly520/Flow.Launcher.Plugin.SearchZones",
+    "IcoPath": "Images/icon.png",
+    "ExecuteFileName": "Flow.Launcher.Plugin.SearchZones.dll"
+}

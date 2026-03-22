@@ -1,0 +1,46 @@
+name: Publish Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - .github/workflows/*
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Get version
+        id: version
+        uses: notiz-dev/github-action-json-property@release
+        with:
+          path: 'Flow.Launcher.Plugin.SearchZones/plugin.json'
+          prop_path: 'Version'
+
+      - run: echo ${{steps.version.outputs.prop}}
+
+      - name: Build
+        run: |
+          dotnet publish Flow.Launcher.Plugin.SearchZones/Flow.Launcher.Plugin.SearchZones.csproj --framework net9.0-windows -c Release -o "Flow.Launcher.Plugin.SearchZones"
+          7z a -tzip "Flow.Launcher.Plugin.SearchZones.zip" "./Flow.Launcher.Plugin.SearchZones/*"
+          rm -r "Flow.Launcher.Plugin.SearchZones"
+
+      - name: Publish
+        if: success()
+        uses: softprops/action-gh-release@v1
+        with:
+          files: "Flow.Launcher.Plugin.SearchZones.zip"
+          tag_name: "v${{steps.version.outputs.prop}}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
