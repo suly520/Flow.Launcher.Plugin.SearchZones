@@ -1,499 +1,562 @@
-# CODEBASE KNOWLEDGE — Flow.Launcher.Plugin.SearchZones
+# SearchZones — Codebase Knowledge Document
 
-> Auto-generated master knowledge document.  
-> Every claim is tied to an actual file, class, or function in this repository.
+> **Generated**: 2026-03-22  
+> **Plugin Version**: 1.0.0  
+> **Target Framework**: .NET 9.0 (Windows)
 
 ---
 
 ## Table of Contents
 
 1. [High-Level Overview](#1-high-level-overview)
-2. [Repository Structure & File Index](#2-repository-structure--file-index)
-3. [System Architecture](#3-system-architecture)
-4. [Feature-by-Feature Analysis](#4-feature-by-feature-analysis)
-5. [Data Flow](#5-data-flow)
-6. [Things You Must Know Before Changing Code](#6-things-you-must-know-before-changing-code)
-7. [Technical Reference & Glossary](#7-technical-reference--glossary)
-8. [Assumptions & Open Questions](#8-assumptions--open-questions)
+2. [Architecture](#2-architecture)
+3. [Directory & File Map](#3-directory--file-map)
+4. [Data Model](#4-data-model)
+5. [Feature Catalog](#5-feature-catalog)
+6. [Cross-Feature Interactions](#6-cross-feature-interactions)
+7. [Services Deep Dive](#7-services-deep-dive)
+8. [UI Layer](#8-ui-layer)
+9. [Build & Deploy](#9-build--deploy)
+10. [Things You Must Know Before Changing Code](#10-things-you-must-know-before-changing-code)
+11. [Technical Reference & Glossary](#11-technical-reference--glossary)
 
 ---
 
 ## 1. High-Level Overview
 
-### What the Application Is
+### What It Is
 
-**Flow.Launcher.Plugin.SearchZones** is a plugin for [Flow Launcher](https://www.flowlauncher.com/), a Windows application launcher. The plugin lets users define named **search templates** — each template is a labelled collection of folder paths and optional filters that can be searched by typing a short keyword (a "shortcut") in Flow Launcher.
+**SearchZones** is a plugin for [Flow Launcher](https://github.com/Flow-Launcher/Flow.Launcher) (a Windows keystroke launcher, similar to Alfred/Raycast). It lets users create **search spaces** — reusable bundles that combine:
 
-**Business purpose in one sentence**: Speed up file discovery on Windows by giving the user named, scoped folder searches that are invoked with a memorable two-letter keyword instead of remembering full paths or opening Explorer.
+- **Folder searches** (file/directory lookup inside scoped directories)
+- **Plugin commands** (launch another FL plugin keyword, or open a program)
+- **Quick commands** (open URLs, run shell commands)
 
-### Target Users
+All are accessible under a single shortcut keyword via the `sz` action keyword.
 
-Power users of Flow Launcher who regularly search inside specific folder sets (project directories, a downloads folder, a pictures archive, etc.) and want the search scoped to that set rather than the entire drive.
+### Business Purpose
 
-### Main Features
+Users who work across many projects, topics, or contexts can define a "search zone" per context (e.g. `uni` for university, `proj` for a project). Typing `sz uni react` instantly searches for "react" across all folders configured under the `uni` zone, while `sz uni` (without search term) shows quick links and commands.
 
-| Feature | Shortcut / Entry Point | Purpose |
-|---|---|---|
-| Template management (list / add / edit / delete) | `sz` (then subcommand) | CRUD on search templates via Flow Launcher query bar |
-| Scoped file search | `sz <shortcut> <query>` | Search files/folders inside a template's configured paths |
-| Everything SDK integration | Automatic (if running) | Fast full-drive search, restricted to configured folders |
-| Windows Search Index fallback | Automatic | Built-in search if Everything is not running |
-| Settings/config UI panel | Flow Launcher settings tab | Visual CRUD for templates + manual Everything DLL path |
-| Context menu on results | Right-click a result | Open file/folder, reveal in Explorer, copy path |
+### Tech Stack
 
-### Feature Interactions at a Glance
-
-```
-User types "sz dl photo"
-      │
-      ▼
-Main.cs:QueryAsync()
-   ├─ resolves "dl" → SearchTemplate (Downloads)
-   ├─ delegates to SearchService
-   │       └─ selects EverythingSearchProvider   (if Everything.exe is running)
-   │           OR WindowsIndexSearchProvider      (fallback)
-   └─ returns Result list → Flow Launcher renders results
-         └─ right-click → LoadContextMenus() → open / copy / reveal actions
-```
-
----
-
-## 2. Repository Structure & File Index
-
-```
-flow-launcher-plug/
-├── FlowLauncherPlugins.sln                  Solution file (single project)
-├── appveyor.yml                              CI build (AppVeyor)
-├── debug.ps1                                Dev helper: build & deploy to local FL plugin dir
-├── release.ps1                              Release helper: build & zip for distribution
-├── Readme.md                                User-facing documentation
-└── Flow.Launcher.Plugin.SearchZones/
-    ├── Flow.Launcher.Plugin.SearchZones.csproj   Project file (net9.0-windows)
-    ├── GlobalUsings.cs                      global using System.IO;
-    ├── Main.cs                              ★ Plugin entry point – all FL callbacks
-    ├── plugin.json                          Plugin metadata (ID, ActionKeyword, version)
-    ├── Images/                              icon.png + other assets
-    ├── Models/
-    │   ├── PluginSettings.cs                Settings root (serialised by FL)
-    │   └── SearchTemplate.cs               Template data model
-    ├── Services/
-    │   ├── ISearchProvider.cs              Interface + SearchResult record
-    │   ├── SearchService.cs                Provider selector (Everything vs Windows Index)
-    │   ├── EverythingSearchProvider.cs     Everything SDK via P/Invoke
-    │   ├── WindowsIndexSearchProvider.cs   Windows Search Index via OleDb / WDS SQL
-    │   └── TemplateManager.cs              Template CRUD, keyword registration, seed data
-    └── UI/
-        ├── SettingPanel.xaml               WPF settings panel layout
-        └── SettingPanel.xaml.cs            Code-behind for settings panel
-```
-
-### Priority File Index
-
-| # | Priority | Path | Role |
-|---|---|---|---|
-| 1 | ★★★ | `Main.cs` | Entry point; all Flow Launcher callbacks |
-| 2 | ★★★ | `Services/SearchService.cs` | Backend selector |
-| 3 | ★★★ | `Services/EverythingSearchProvider.cs` | Primary search (P/Invoke) |
-| 4 | ★★★ | `Services/WindowsIndexSearchProvider.cs` | Fallback search (OleDb) |
-| 5 | ★★★ | `Services/TemplateManager.cs` | Template CRUD + FL keyword registration |
-| 6 | ★★ | `Models/SearchTemplate.cs` | Core data model |
-| 7 | ★★ | `Models/PluginSettings.cs` | Settings root |
-| 8 | ★★ | `UI/SettingPanel.xaml.cs` | Settings UI code-behind |
-| 9 | ★ | `UI/SettingPanel.xaml` | Settings UI layout |
-| 10 | ★ | `plugin.json` | Plugin manifest |
-
----
-
-## 3. System Architecture
-
-### Interfaces Implemented by `Main.cs`
-
-| Interface | Purpose |
+| Layer | Technology |
 |---|---|
-| `IAsyncPlugin` | `InitAsync()` and `QueryAsync()` — main entry points |
-| `IContextMenu` | `LoadContextMenus()` — right-click menu on results |
-| `IPluginI18n` | `GetTranslatedPluginTitle/Description()` — plugin name display |
-| `ISettingProvider` | `CreateSettingPanel()` — returns the WPF settings control |
+| Language | C# 12 |
+| Framework | .NET 9.0 (Windows) |
+| UI | WPF (`UserControl` settings panel) |
+| Plugin SDK | `Flow.Launcher.Plugin` 4.4.0 NuGet |
+| File search (primary) | [Everything SDK](https://www.voidtools.com/support/everything/sdk/) via P/Invoke to `Everything64.dll` |
+| File search (fallback) | Windows Search Index via `System.Data.OleDb` |
+| Serialization | `System.Text.Json` |
+| CI | AppVeyor |
+
+---
+
+## 2. Architecture
 
 ### Component Diagram
 
 ```mermaid
 graph TD
-    FL[Flow Launcher] -->|QueryAsync| Main
-    FL -->|LoadContextMenus| Main
-    FL -->|CreateSettingPanel| Main
+    subgraph FlowLauncher["Flow Launcher Host"]
+        FL_API["IPublicAPI"]
+    end
 
-    Main -->|CRUD| TM[TemplateManager]
-    Main -->|SearchAsync| SS[SearchService]
-    TM -->|reads/writes| PS[PluginSettings / JSON]
+    subgraph Plugin["SearchZones Plugin"]
+        Main["Main.cs<br/>(IAsyncPlugin, IContextMenu, ISettingProvider)"]
+        TM["TemplateManager"]
+        SS["SearchService"]
+        ESP["EverythingSearchProvider"]
+        WISP["WindowsIndexSearchProvider"]
+        UI["SettingPanel (WPF)"]
+    end
 
-    SS -->|IsServiceRunning| ESP[EverythingSearchProvider<br/>P/Invoke → Everything64.dll]
-    SS -->|fallback| WISP[WindowsIndexSearchProvider<br/>OleDb → Windows Search Index]
+    subgraph Models
+        PS["PluginSettings"]
+        ST["SearchTemplate"]
+        TE["TemplateEntry"]
+    end
 
-    Main --> UI[SettingPanel<br/>WPF UserControl]
-    UI -->|CRUD| TM
-    UI -->|Save| PS
+    FL_API -->|InitAsync / QueryAsync| Main
+    Main --> TM
+    Main --> SS
+    TM --> PS
+    SS --> ESP
+    SS --> WISP
+    ESP -.->|P/Invoke| EverythingDLL["Everything64.dll"]
+    WISP -.->|OleDb| WinIndex["Windows Search Index"]
+    Main -->|CreateSettingPanel| UI
+    UI --> TM
+    UI --> PS
+    PS --> ST
+    ST --> TE
 ```
 
-### Key Cross-Cutting Concerns
+### Architectural Patterns
 
-| Concern | Implementation |
+| Pattern | Where |
 |---|---|
-| **Persistence** | `IPublicAPI.LoadSettingJsonStorage<PluginSettings>()` / `SavePluginSettings()` — FL manages the JSON file |
-| **Thread safety** | `QueryAsync` is async; `CancellationToken` passed through to both search providers. Everything P/Invoke calls are synchronous (wrapped in `Task.FromResult`). |
-| **Environment variable expansion** | `SearchTemplate.GetExpandedFolders()` calls `Environment.ExpandEnvironmentVariables()` on each folder path before use |
-| **Security** | No user-provided strings are ever passed to shell or `cmd.exe`; `Process.Start` uses `ProcessStartInfo` with `UseShellExecute = true`. SQL parameters in `WindowsIndexSearchProvider` are escaped via `EscapeSql()`. |
-| **Localisation** | UI strings are in German (app is written by a German-speaking author). The FL plugin title/description are in English. |
+| **Strategy** | `ISearchProvider` interface with `EverythingSearchProvider` and `WindowsIndexSearchProvider` implementations; `SearchService` picks at runtime |
+| **Template/Preset** | `SearchTemplate` = reusable configuration bundle of entries |
+| **Command pattern** | Each `Result.Action` is a lambda — CLI-style management commands (`add`, `del`, `edit`, `settings`) |
+| **Settings binding** | Flow Launcher JSON-based settings storage (`LoadSettingJsonStorage<PluginSettings>`) + WPF two-way bindings for the Settings UI |
+| **Migration** | `MigrateTemplates()` converts legacy `IncludeFolders` list to typed `Entries` on startup |
+
+### Data Flow
+
+```
+User types "sz uni react"
+  → Flow Launcher invokes QueryAsync(query)
+  → Main checks ActionKeyword == "sz"
+  → TemplateManager.GetTemplateByShortcut("uni") → returns SearchTemplate
+  → HandleSearchQuery(template, "react", token)
+    → template.GetExpandedFolders() → [expanded paths]
+    → SearchService.SearchAsync("react", folders, excludes, filters, subdirs, token)
+      → if Everything running: EverythingSearchProvider.SearchAsync(...)
+        → P/Invoke Everything64.dll → returns SearchResult[]
+      → else: WindowsIndexSearchProvider.SearchAsync(...)
+        → OleDb SQL to Windows Search Index → returns SearchResult[]
+    → Map SearchResult[] to List<Result> (Flow Launcher display items)
+    → Also filter/show PluginCommand and QuickCommand entries matching search term
+  → Results displayed to user
+```
 
 ---
 
-## 4. Feature-by-Feature Analysis
+## 3. Directory & File Map
 
-### 4.1 Plugin Initialization
+```
+Flow.Launcher.Plugin.SearchZones/
+├── Main.cs                          # Plugin entry point (IAsyncPlugin, IContextMenu, ISettingProvider)
+├── GlobalUsings.cs                  # global using System.IO
+├── plugin.json                      # FL plugin manifest (ID, keyword "sz", version)
+├── Flow.Launcher.Plugin.SearchZones.csproj  # Project file (net9.0-windows, WPF, NuGet refs)
+├── Images/
+│   └── icon.png                     # Plugin icon
+├── Models/
+│   ├── PluginSettings.cs            # Root settings: Templates list, IsFirstRun, EverythingDllPath
+│   ├── SearchTemplate.cs            # A "search zone": name, shortcut, entries, filters
+│   └── TemplateEntry.cs             # Single entry: Folder | PluginCommand | QuickCommand
+├── Services/
+│   ├── ISearchProvider.cs           # Interface + SearchResult record
+│   ├── SearchService.cs             # Facade: picks Everything or Windows Index at query time
+│   ├── EverythingSearchProvider.cs  # P/Invoke wrapper for Everything SDK
+│   └── WindowsIndexSearchProvider.cs # OleDb queries against Windows Search
+│   └── TemplateManager.cs           # CRUD for templates, migrations, seeding defaults
+└── UI/
+    ├── SettingPanel.xaml             # WPF settings UI (expanders per template, import/export)
+    └── SettingPanel.xaml.cs          # Code-behind: entry management, folder browser, JSON import/export
+```
 
-**File**: `Main.cs` → `InitAsync()`
+### Root-Level Files
 
-**What happens on startup**:
-1. `PluginSettings` is deserialised from FL's JSON storage.
-2. `SearchService` is constructed (which creates `EverythingSearchProvider` and `WindowsIndexSearchProvider`).
-3. `TemplateManager` is constructed and:
-   - `SeedDefaults()` — on first run only (`IsFirstRun == true`), creates 5 default templates (Default Search, Downloads, Documents, Pictures, Desktop) and marks `IsFirstRun = false`.
-   - `RegisterAllKeywords()` — removes any leftover action keywords that templates may have registered in a prior plugin version. The plugin now uses only `sz` as its single action keyword; template shortcuts are parsed from the query string, not registered as separate FL action keywords.
-
-**Business purpose**: Guarantee the plugin is usable out of the box without any manual configuration.
-
----
-
-### 4.2 Template Management via `sz`
-
-**Entry point**: `Main.cs` → `QueryAsync()` → `HandleManagementQuery()`
-
-**Trigger**: User types `sz` (the management keyword, constant `ManagementKeyword = "sz"`). The query does **not** match any registered template shortcut.
-
-**Sub-commands**:
-
-| User types | Handler | Effect |
-|---|---|---|
-| `sz` (nothing) | `ShowAllTemplates()` | Lists all templates + "Create new" entry |
-| `sz <partial>` | `ShowAllTemplates(filter)` | Filters templates by name/shortcut |
-| `sz add <shortcut> <name> <f1;f2>` | `HandleAddCommand()` | Preview → confirm adds template |
-| `sz del <nameOrShortcut>` | `HandleDeleteCommand()` | Preview → confirm deletes template |
-| `sz edit <shortcut>` | `HandleEditCommand()` | Shows editable fields |
-| `sz edit <shortcut> name <v>` | `HandleEditCommand()` | Inline field edit |
-| `sz settings everything <path>` | `HandleSettingsCommand()` | Set Everything DLL path |
-
-**Scoring logic** (`TemplateScore()`):
-- Exact shortcut match → 1000
-- Shortcut prefix match → 900
-- Name starts with filter → 700
-- Name contains filter → 600
-- Default → 500
-
-**Business purpose**: Allow users to manage their search configuration entirely from the Flow Launcher command bar without opening a GUI.
-
----
-
-### 4.3 Scoped File Search
-
-**Entry point**: `Main.cs` → `QueryAsync()` → `HandleSearchQuery()`
-
-**Trigger**: User types `sz <shortcut> <query>` where `<shortcut>` matches a registered `SearchTemplate.Shortcut`.
-
-**Flow**:
-1. The first word after `sz` is looked up via `TemplateManager.GetTemplateByShortcut()`.
-2. If matched and `<query>` is empty → show a "prompt" result telling the user what to type.
-3. If `<query>` is non-empty:
-   a. `SearchTemplate.GetExpandedFolders()` expands env vars and filters out non-existent directories.
-   b. `SearchService.SearchAsync()` is called with the query, folders, exclude patterns, file type filter, and subdirectory flag.
-   c. Results are mapped to FL `Result` objects. Each result:
-      - Title = filename, SubTitle = full path
-      - `IcoPath` = full file path (FL resolves system file icons from path)
-      - `ContextData` = full path (used by context menu)
-      - `Action` = opens file with `UseShellExecute` or opens folder in Explorer
-
-**Business purpose**: Give the user a fast, folder-scoped file search accessible from the same launcher they use for everything else.
-
----
-
-### 4.4 Everything Search Backend
-
-**File**: `Services/EverythingSearchProvider.cs`
-
-**What it does**: Uses P/Invoke to call `Everything64.dll` — the native DLL shipped with [voidtools Everything](https://www.voidtools.com/) — to perform instant indexed searches.
-
-**DLL discovery order** (`EnsureDllLoaded()`):
-1. User-configured path (`PluginSettings.EverythingDllPath`)
-2. `%ProgramFiles%\Everything\Everything64.dll`
-3. `%ProgramFiles(x86)%\Everything\Everything64.dll`
-4. Registry: `HKLM\SOFTWARE\...\Uninstall\Everything` → `InstallLocation`
-5. Running `Everything.exe` / `Everything64.exe` process → executable directory
-
-**Availability check** (`IsAvailable`): Simply checks if the Everything process is running (no DLL load required). Used by `Main.cs` for the status indicator result.
-
-**Service check** (`IsServiceRunning`): Loads the DLL and calls `Everything_GetMajorVersion()`. Used by `SearchService` to decide which provider to actually use.
-
-**Query construction** (`BuildQuery()`):
-- Single folder: `"<folder>" <query>`
-- Multiple folders: `<"f1"|"f2"> <query>`
-- File type filter: `ext:<ext1;ext2>` clause prepended
-- Returns up to 200 results (`Everything_SetMax(200)`)
-
-**Exclude filtering**: Post-processed client-side — `IsExcluded()` checks `Contains()` on the full path.
-
-**P/Invoke declarations**: `SetDllDirectory`, `Everything_SetSearchW`, `Everything_SetRequestFlags`, `Everything_SetMax`, `Everything_QueryW`, `Everything_GetLastError`, `Everything_GetNumResults`, `Everything_GetResultFullPathNameW`, `Everything_GetMajorVersion`.
-
-**Business purpose**: Millisecond-speed search across large drives, giving a far better UX than Windows Search.
-
----
-
-### 4.5 Windows Search Index Fallback
-
-**File**: `Services/WindowsIndexSearchProvider.cs`
-
-**What it does**: Uses `System.Data.OleDb` to query the Windows Search database (`SystemIndex`) via a SQL-like dialect called WDS (Windows Desktop Search) SQL.
-
-**Connection string**: `Provider=Search.CollatorDSO;Extended Properties='Application=Windows'`
-
-**Query construction** (`BuildSql()`):
-- Scope: `SCOPE = 'file:<folder>'` (deep) or `DIRECTORY = 'file:<folder>'` (shallow) per folder, joined with `OR`
-- Search term: `System.FileName LIKE '%<query>%'`
-- File type filter: `System.FileName LIKE '%<ext>'` per extension, joined with `OR`
-- Returns up to 200 results (enforced in the `while` loop)
-
-**SQL injection prevention**: `EscapeSql()` escapes single quotes by doubling them before interpolation. This is the query's only injection surface.
-
-**Availability check**: Tries to open the OleDb connection; returns `false` on exception.
-
-**Business purpose**: Zero-dependency fallback that works on any Windows machine without installing Everything.
-
----
-
-### 4.6 Settings UI Panel
-
-**Files**: `UI/SettingPanel.xaml` + `UI/SettingPanel.xaml.cs`
-
-**Returned by**: `Main.cs` → `CreateSettingPanel()` → `new UI.SettingPanel(_settings, _templateManager, onSave)`
-
-**Layout sections**:
-1. **Everything Search** — text box for DLL path, "..." browse button, status text label
-2. **Templates DataGrid** — read-only grid showing all templates (shortcut, name, folders, description, subdirs checkbox)
-3. **Toolbar** — `+Add`, `Edit`, `Delete` buttons
-4. **Edit Form** (collapsible `Border`) — shortcut, name, description, folder list with add/browse/remove, subdirs checkbox, Save/Cancel
-
-**Mode switching**: `_editingId` field: `null` = add mode, non-null string = edit mode (holds the template `Id`).
-
-**Folder browse hack**: WPF has no native folder picker prior to .NET 6 / Windows App SDK. The code uses `OpenFileDialog` with `ValidateNames=false` and `CheckFileExists=false`, then calls `Path.GetDirectoryName()` on the result to get the folder path.
-
-**Save callback**: The `Action _onSave` delegate passed from `Main.cs` calls `_context.API.SavePluginSettings()` and re-creates `SearchService` (to reload the Everything DLL path).
-
-**Business purpose**: Provide a discoverable GUI alternative to the command-bar management subcommands, especially useful for complex template edits (folder lists).
-
----
-
-### 4.7 Context Menu
-
-**File**: `Main.cs` → `LoadContextMenus()`
-
-**Trigger**: User right-clicks a search result in Flow Launcher.
-
-**Data source**: `Result.ContextData` stores the full file/folder path set during `HandleSearchQuery()`.
-
-**Menu items**:
-| Item | Action |
+| File | Purpose |
 |---|---|
-| "Datei/Ordner öffnen" | `Process.Start` with `UseShellExecute = true` |
-| "Übergeordneten Ordner öffnen" | `explorer.exe /select,"<path>"` |
-| "Pfad kopieren" | `IPublicAPI.CopyToClipboard(fullPath)` |
-| "Dateiname kopieren" | `IPublicAPI.CopyToClipboard(Path.GetFileName(fullPath))` |
-
-**Business purpose**: Reduce the need to open Explorer for common post-search actions.
+| `appveyor.yml` | CI: publishes Release build, creates `.zip` artifact |
+| `debug.ps1` | Dev script: publish Debug → deploy to FL Plugins folder → restart FL |
+| `release.ps1` | Creates release `.zip` from Release publish output |
+| `FlowLauncherPlugins.sln` | Solution file |
 
 ---
 
-## 5. Data Flow
+## 4. Data Model
 
-### Query Flow (Search Mode)
+### Entity Relationship
 
 ```mermaid
-sequenceDiagram
-    participant User
-    participant FL as Flow Launcher
-    participant Main
-    participant TM as TemplateManager
-    participant SS as SearchService
-    participant ESP as Everything (P/Invoke)
-    participant WISP as Windows Index (OleDb)
+erDiagram
+    PluginSettings ||--o{ SearchTemplate : "Templates"
+    SearchTemplate ||--o{ TemplateEntry : "Entries"
 
-    User->>FL: sz dl photo
-    FL->>Main: QueryAsync(query="dl photo")
-    Main->>TM: GetTemplateByShortcut("dl")
-    TM-->>Main: SearchTemplate{Downloads}
-    Main->>SS: SearchAsync("photo", [C:\Users\X\Downloads], ...)
-    SS->>ESP: IsServiceRunning?
-    alt Everything running
-        ESP-->>SS: true
-        SS->>ESP: SearchAsync(...)
-        ESP-->>SS: List<SearchResult>
-    else Everything not running
-        ESP-->>SS: false
-        SS->>WISP: SearchAsync(...)
-        WISP-->>SS: List<SearchResult>
-    end
-    SS-->>Main: List<SearchResult>
-    Main-->>FL: List<Result>
-    FL-->>User: Shows results
+    PluginSettings {
+        bool IsFirstRun
+        string EverythingDllPath
+    }
+
+    SearchTemplate {
+        string Id "GUID"
+        string Name
+        string Shortcut "unique keyword"
+        string Description
+        bool SearchSubdirectories "default true"
+        string[] ExcludePatterns
+        string[] FileTypeFilter
+        string[] IncludeFolders "LEGACY - migrated to Entries"
+    }
+
+    TemplateEntry {
+        string Id "GUID"
+        EntryType Type "Folder | PluginCommand | QuickCommand"
+        string Value "path / URL / keyword / command"
+        string Label "optional display name"
+    }
 ```
 
-### Settings Persistence Flow
+### EntryType Enum
 
-```
-PluginSettings (in-memory object, root of all state)
-    │
-    ├── Mutated by: TemplateManager.AddTemplate / EditTemplate / DeleteTemplate
-    ├── Mutated by: SettingPanel (via TemplateManager + direct field writes for EverythingDllPath)
-    │
-    └── Serialised/Deserialised by: IPublicAPI.SavePluginSettings / LoadSettingJsonStorage<T>
-            └── JSON file managed by Flow Launcher (location: FL's plugin data folder)
-```
+| Value | Semantics | `Value` field contains |
+|---|---|---|
+| `Folder` | Directory to search for files | Filesystem path, may contain `%ENV_VARS%` |
+| `PluginCommand` | FL action keyword or program executable | Single word = FL keyword; contains `\` or `/` = program path |
+| `QuickCommand` | URL or shell command | Starts with `http(s)://` = URL; otherwise = shell command via `cmd.exe /c` |
 
----
+### Computed Properties on `TemplateEntry`
 
-## 6. Things You Must Know Before Changing Code
-
-### 6.1 Single Action Keyword Architecture
-
-The plugin **intentionally uses only one action keyword: `sz`**. Template shortcuts are parsed from the query string in `QueryAsync()`, not registered as separate FL action keywords.
-
-`TemplateManager.RegisterAllKeywords()` actively **removes** any template shortcut that was registered as an action keyword (legacy cleanup). If you re-introduce per-template keywords, this method will undo your work on every startup.
-
-### 6.2 Everything DLL Is Not Bundled
-
-`Everything64.dll` is not a NuGet package or a bundled file. The plugin auto-discovers it at runtime. If you change the discovery logic in `EnsureDllLoaded()`, test all five discovery paths.
-
-### 6.3 `IsAvailable` vs `IsServiceRunning` Are Different
-
-`EverythingSearchProvider.IsAvailable`: checks process existence (cheap, no DLL load). Used only for the **status indicator** shown in the management result list.
-
-`EverythingSearchProvider.IsServiceRunning`: loads the DLL and calls an API function. The one used by `SearchService` to decide whether to actually search with Everything. These must not be conflated.
-
-### 6.4 `SetDllDirectory` SideEffect
-
-`EnsureDllLoaded()` calls `SetDllDirectory(Path.GetDirectoryName(path))` as a process-wide side effect to let Windows resolve `Everything64.dll` from its install directory. Changing the DLL path at runtime (via settings) requires re-creating `SearchService` — which is why `CreateSettingPanel()` passes an `onSave` callback that does exactly that.
-
-### 6.5 Environment Variable Expansion Is Deferred
-
-`SearchTemplate.IncludeFolders` stores raw paths, potentially with `%USERPROFILE%` etc. Expansion only happens in `GetExpandedFolders()`. **Never** call `IncludeFolders` directly when you need actual filesystem paths.
-
-### 6.6 WPF Folder Picker Hack
-
-`SettingPanel.xaml.cs → BrowseFolderButton_Click()` uses `OpenFileDialog` in folder-selection mode (a well-known WPF workaround). It strips the fake filename using `Path.GetDirectoryName()`. This requires the user to click "Open" without selecting a file — the path shown is the selected directory.
-
-### 6.7 SQL Injection Surface in Windows Search Provider
-
-`WindowsIndexSearchProvider.BuildSql()` interpolates user-typed search terms and folder paths into a WDS SQL string. Mitigation is the `EscapeSql()` helper (single-quote doubling). This is correct for WDS SQL but **not** a prepared-statement approach. When adding new interpolated fields, always pass them through `EscapeSql()`.
-
-### 6.8 First-Run Seed Happens Once
-
-`TemplateManager.SeedDefaults()` reads `PluginSettings.IsFirstRun` and sets it to `false` immediately. Default templates are added **exactly once** per plugin installation. Adding new defaults in a future version requires a migration strategy (e.g., a version field), because `SeedDefaults` will no-op for existing users.
-
-### 6.9 Result Limit Is Hardcoded at 200
-
-Both providers cap results at 200. `Everything_SetMax(200)` in `EverythingSearchProvider`; `results.Count < 200` guard in `WindowsIndexSearchProvider`. There is no user-configurable page size.
-
-### 6.10 German UI Strings
-
-All user-visible strings in `Main.cs` and `SettingPanel.xaml` are in **German**. Localisation is not implemented. If internationalisation is needed, these strings need to be extracted to resource files.
-
----
-
-## 7. Technical Reference & Glossary
-
-### Domain Glossary
-
-| Term | Definition |
+| Property | Logic |
 |---|---|
-| **Template** | A named configuration object: a shortcut, a set of include folders, optional exclude patterns, optional file type filters, and a subdirectory flag |
-| **Shortcut** | A short keyword (e.g., `dl`, `doc`) typed after `sz` to identify a template |
-| **Management keyword** | `sz` — the single FL action keyword for the entire plugin |
-| **Provider** | An implementation of `ISearchProvider` (`Everything` or `WindowsIndex`) |
-| **Action keyword** | A FL concept: a keyword that routes a query to a specific plugin |
-| **Seed / first run** | Automatic creation of default templates on the very first plugin load |
-| **Everything** | [voidtools Everything](https://www.voidtools.com/) — a free Windows search tool with an SDK DLL |
-| **Windows Search Index** | Windows' built-in file indexer, queryable via OleDb and WDS SQL |
+| `DisplayLabel` | `Label` if non-empty, else `Value` |
+| `IsUrl` | Type is QuickCommand AND Value contains `://` |
+| `IsFlKeyword` | Type is PluginCommand AND Value is one word without path separators |
 
-### Key Classes and Functions
+### Computed Properties on `SearchTemplate`
 
-| Symbol | File | Summary |
-|---|---|---|
-| `SearchZones` | `Main.cs` | Plugin root class; all FL callbacks |
-| `QueryAsync()` | `Main.cs` | Routes query to search or management handler |
-| `HandleSearchQuery()` | `Main.cs` | Produces file search results for a matched template |
-| `HandleManagementQuery()` | `Main.cs` | Dispatches `add`, `del`, `edit`, `settings` subcommands |
-| `ShowAllTemplates()` | `Main.cs` | Lists templates with optional text filter + status indicators |
-| `LoadContextMenus()` | `Main.cs` | Returns right-click actions for a search result |
-| `CreateSettingPanel()` | `Main.cs` | Returns the WPF settings control |
-| `SearchTemplate` | `Models/SearchTemplate.cs` | Data model; `GetExpandedFolders()` expands env vars |
-| `PluginSettings` | `Models/PluginSettings.cs` | Root settings object serialised by FL |
-| `TemplateManager` | `Services/TemplateManager.cs` | CRUD on `PluginSettings.Templates`; keyword registration; seed |
-| `SearchService` | `Services/SearchService.cs` | Selects provider based on `IsServiceRunning`; delegates search |
-| `EverythingSearchProvider` | `Services/EverythingSearchProvider.cs` | P/Invoke wrapper for Everything64.dll |
-| `WindowsIndexSearchProvider` | `Services/WindowsIndexSearchProvider.cs` | OleDb / WDS SQL search against Windows Search Index |
-| `ISearchProvider` | `Services/ISearchProvider.cs` | Interface: `IsAvailable` + `SearchAsync()` |
-| `SearchResult` | `Services/ISearchProvider.cs` | Record: `FullPath`, `FileName`, `IsFolder` |
-| `SettingPanel` | `UI/SettingPanel.xaml.cs` | WPF code-behind for the settings panel |
-| `EnsureDllLoaded()` | `EverythingSearchProvider.cs` | Lazy-loads Everything64.dll; five discovery strategies |
-| `BuildQuery()` | `EverythingSearchProvider.cs` | Constructs Everything search string with folder scoping |
-| `BuildSql()` | `WindowsIndexSearchProvider.cs` | Constructs WDS SQL query with scope, term, type filter |
-| `SeedDefaults()` | `TemplateManager.cs` | Creates 5 default templates on first run |
-| `RegisterAllKeywords()` | `TemplateManager.cs` | Removes legacy per-template FL action keywords |
+| Property | Logic |
+|---|---|
+| `FolderEntries` | `Entries.Where(Type == Folder)` |
+| `PluginCommandEntries` | `Entries.Where(Type == PluginCommand)` |
+| `QuickCommandEntries` | `Entries.Where(Type == QuickCommand)` |
+| `EntriesSummary` | e.g. "2 folders, 1 command, 3 quick" |
+| `GetExpandedFolders()` | Expands `%ENV%` vars, filters to existing dirs |
 
-### Dependencies
+### Persistence
 
-| Dependency | Version | Role |
-|---|---|---|
-| `Flow.Launcher.Plugin` | 4.4.0 | FL plugin SDK (interfaces, `IPublicAPI`, `Result`, etc.) |
-| `System.Data.OleDb` | 9.0.0 | Windows Search Index queries |
-| `Everything64.dll` | runtime / external | voidtools Everything search engine SDK |
-| .NET | 9.0-windows | Runtime |
-| WPF | (included in .NET 9 windows) | Settings panel UI |
+Settings are stored as JSON by Flow Launcher (`context.API.LoadSettingJsonStorage<PluginSettings>()`). The file lives in FL's per-plugin settings directory. All mutations call `context.API.SavePluginSettings()`.
 
-### `plugin.json` Manifest
+---
 
-```json
-{
-  "ID": "6F84CC74D30945B280A6F567228A5F89",
-  "ActionKeyword": "sz",
-  "Name": "SearchZones",
-  "Version": "1.0.0",
-  "Language": "csharp",
-  "ExecuteFileName": "Flow.Launcher.Plugin.SearchZones.dll"
-}
+## 5. Feature Catalog
+
+### F1: Search-Space File Search
+
+**Business need**: Find files quickly across multiple project/topic-specific directories without searching the entire filesystem.
+
+**Entry point**: `sz <shortcut> <search term>` → `Main.QueryAsync()` → `HandleSearchQuery()`
+
+**Flow**:
+1. `TemplateManager.GetTemplateByShortcut()` resolves shortcut to `SearchTemplate`
+2. `SearchTemplate.GetExpandedFolders()` collects and validates folder paths
+3. `SearchService.SearchAsync()` delegates to the available provider
+4. Results mapped to `Result` objects: title = filename, subtitle = full path, icon = file itself
+5. Context menu provides: open, open parent folder, copy path, copy filename
+
+**Search providers** (see [Services Deep Dive](#7-services-deep-dive)):
+- **Everything** — native P/Invoke, folder-scoped, max 200 results
+- **Windows Index** — OleDb SQL, uses `SCOPE` / `DIRECTORY` filtering, max 200 results
+
+### F2: Quick Commands
+
+**Business need**: Launch frequently used URLs or shell commands from within a search zone without leaving the launcher.
+
+**Entry point**: Shown when `sz <shortcut>` is typed without search term (preview mode), or filtered when a search term is typed.
+
+**Behavior**:
+- URLs → `Process.Start` with `UseShellExecute = true` (opens default browser)
+- Shell commands → `cmd.exe /c <command>` via `Process.Start`
+
+**Score**: 600 (highest among entry types)
+
+### F3: Plugin Commands
+
+**Business need**: Group related Flow Launcher plugins, program launchers, and tools together in a context-specific bundle.
+
+**Entry point**: Same as Quick Commands — shown in preview or filtered by search term.
+
+**Behavior**:
+- FL keywords → `context.API.ChangeQuery("<keyword> ")` — switches FL to that plugin
+- Program paths → `Process.Start` with `UseShellExecute = true`
+
+**Score**: 300 (below Quick Commands)
+
+### F4: Template Management (CLI)
+
+**Business need**: Create, edit, and delete search zones directly from the Flow Launcher query bar.
+
+**Commands** (all via `sz <command>`):
+
+| Command | Action |
+|---|---|
+| `sz` | Lists all templates with metadata |
+| `sz add <shortcut> <name> <folders>` | Creates new template (folders semicolon-separated) |
+| `sz del <name-or-shortcut>` | Deletes matching template(s) |
+| `sz edit <shortcut>` | Shows editable fields for a template |
+| `sz edit <shortcut> <field> <value>` | Inline edit (name, shortcut, folders, exclude, types) |
+| `sz settings everything <path>` | Configure Everything DLL path |
+
+### F5: Settings UI (WPF Panel)
+
+**Business need**: Visual management of search zones for users who prefer a GUI over CLI commands.
+
+**Entry point**: Flow Launcher Settings → Plugins → SearchZones → `Main.CreateSettingPanel()`
+
+**Capabilities**:
+- Expander-based list of all templates
+- Per-template: edit shortcut, name, description, subdirectory toggle
+- Per-entry-type sections: add/remove Folders, Plugin Commands, Quick Commands
+- Plugin Command ComboBox with filterable dropdown (FL keywords + installed Start Menu programs)
+- Everything DLL path configuration with status indicator
+- JSON Import/Export (merge or replace)
+
+### F6: Import / Export
+
+**Business need**: Backup, share, or migrate search zones between machines.
+
+**Format**: JSON array of `SearchTemplate` objects (see README examples).
+
+**Import modes**:
+- **Merge** (Yes) — appends imported templates alongside existing
+- **Replace** (No) — clears all existing, replaces with imported
+- IDs are regenerated on import to prevent collisions
+
+### F7: Default Seeding
+
+**Business need**: Provide useful out-of-the-box templates on first run so the plugin isn't empty.
+
+**Entry point**: `TemplateManager.SeedDefaults()` — runs only when `IsFirstRun == true`
+
+**Default templates**: `ds` (Default Search — Downloads, Desktop, Documents, Pictures, Music, Videos), `dl` (Downloads), `doc` (Documents), `pic` (Pictures), `desk` (Desktop)
+
+### F8: Legacy Migration
+
+**Business need**: Seamlessly upgrade users from the old `IncludeFolders` string list to the new typed `Entries` model.
+
+**Entry point**: `TemplateManager.MigrateTemplates()` — called before `SeedDefaults()` on every startup. Converts `IncludeFolders` → `TemplateEntry(Type=Folder)` then clears the legacy list.
+
+---
+
+## 6. Cross-Feature Interactions
+
+```mermaid
+graph LR
+    F1[File Search] --> SS[SearchService]
+    F1 --> TM[TemplateManager]
+    F2[Quick Commands] --> TM
+    F3[Plugin Commands] --> TM
+    F4[CLI Management] --> TM
+    F5[Settings UI] --> TM
+    F5 --> PS[PluginSettings]
+    F6[Import/Export] --> PS
+    F7[Seeding] --> TM
+    F8[Migration] --> TM
+    SS --> ESP[EverythingProvider]
+    SS --> WISP[WindowsIndexProvider]
+    TM --> PS
 ```
 
-### Default Templates (Seeded on First Run)
+**Key interactions**:
+- All features read/write through `TemplateManager` and `PluginSettings` — no feature has its own separate state.
+- `SearchService` is recreated whenever settings change (new `SearchService(_settings)`) to pick up a potentially new `EverythingDllPath`.
+- The Settings UI directly mutates `PluginSettings.Templates` via two-way WPF bindings and calls `_onSave()` which triggers `SavePluginSettings()` + `SearchService` recreation.
+- CLI commands (`HandleAddCommand`, `HandleEditCommand`, `HandleDeleteCommand`) go through `TemplateManager` methods which validate and persist.
 
-| Shortcut | Name | Folders |
+---
+
+## 7. Services Deep Dive
+
+### SearchService (`Services/SearchService.cs`)
+
+Thin facade. Holds one `EverythingSearchProvider` and one `WindowsIndexSearchProvider`. On each `SearchAsync` call, checks `_everything.IsServiceRunning` and delegates to that provider if true, otherwise falls back to `_windowsIndex`.
+
+### EverythingSearchProvider (`Services/EverythingSearchProvider.cs`)
+
+**DLL Loading Strategy** (lazy, in priority order):
+1. User-configured `EverythingDllPath` setting
+2. `%ProgramFiles%\Everything\Everything64.dll`
+3. `%ProgramFiles(x86)%\Everything\Everything64.dll`
+4. Windows Registry uninstall keys (`HKLM\SOFTWARE\...\Uninstall\Everything` → `InstallLocation`)
+5. Running `Everything` / `Everything64` process → `MainModule.FileName` directory
+
+Uses `SetDllDirectory()` to add the directory to the DLL search path so P/Invoke can resolve `Everything64.dll`.
+
+**P/Invoke functions**: `Everything_SetSearchW`, `Everything_SetRequestFlags`, `Everything_SetMax`, `Everything_QueryW`, `Everything_GetLastError`, `Everything_GetNumResults`, `Everything_GetResultFullPathNameW`, `Everything_GetMajorVersion`
+
+**Query building**: Folder scoping via `"<path>"` or `<"path1"|"path2">`, optional `ext:` filter, then the search term.
+
+**Result limit**: 200 results max.
+
+### WindowsIndexSearchProvider (`Services/WindowsIndexSearchProvider.cs`)
+
+**Connection**: `OleDb` → `Provider=Search.CollatorDSO;Extended Properties='Application=Windows'`
+
+**Query building**: SQL-like syntax against `SystemIndex` table.
+- Folder scoping: `SCOPE = 'file:<path>'` (with subdirs) or `DIRECTORY = 'file:<path>'` (without)
+- Search: `System.FileName LIKE '%<term>%'`
+- File types: `System.FileName LIKE '%<ext>'`
+
+**SQL injection protection**: `EscapeSql()` replaces `'` with `''`.
+
+**Result limit**: 200 results max.
+
+### TemplateManager (`Services/TemplateManager.cs`)
+
+CRUD for `SearchTemplate` objects within `PluginSettings.Templates`:
+- `AddTemplate` — validates non-empty shortcut/name, uniqueness
+- `EditTemplate` — accepts `Action<SearchTemplate>` update delegate, validates shortcut uniqueness if changed
+- `DeleteTemplate` — removes by ID
+- `RegisterAllKeywords` — cleanup: removes any template shortcuts previously registered as FL action keywords (migration from earlier plugin version)
+- `MigrateTemplates` — converts legacy `IncludeFolders` → `Entries`
+- `SeedDefaults` — populates 5 default templates on first run
+
+---
+
+## 8. UI Layer
+
+### SettingPanel (`UI/SettingPanel.xaml` + `.xaml.cs`)
+
+WPF `UserControl` with vertical `StackPanel` layout:
+
+1. **Everything section**: TextBox for DLL path + Browse button + status text (color-coded: green/orange/red)
+2. **Templates section**: `ItemsControl` with `DataTemplate` rendering each template as an `Expander`
+   - Header: shortcut (bold) | name | entries summary (gray)
+   - Body: inline text editing for shortcut/name/description, checkbox for subdirectories
+   - Three grouped sections (Folders, Plugin Commands, Quick Commands) each with entry list + add row
+3. **Import/Export buttons**: bottom-right aligned
+
+**Notable UI patterns**:
+- `ObservableCollection<SearchTemplate>` powers the `ItemsControl`
+- `RefreshList()` rebuilds the collection and restores expanded state via dispatcher
+- Plugin Command ComboBox uses `ICollectionView` with dynamic text filter for search-as-you-type
+- `BuildPluginCommandItems()` in Main.cs gathers all FL keywords + Start Menu `.lnk` files
+- Scroll-fix: `PreviewMouseWheel` handler bubbles scroll events to FL's host `ScrollViewer` unless a ComboBox dropdown is open
+
+---
+
+## 9. Build & Deploy
+
+### Local Development
+
+```powershell
+# Debug build + deploy to FL plugins folder + restart Flow Launcher
+.\debug.ps1
+```
+
+Steps: `dotnet publish -c Debug -r win-x64 --no-self-contained` → copies to `%APPDATA%\FlowLauncher\Plugins\SearchZones` → starts FL.
+
+### Release
+
+```powershell
+.\release.ps1
+```
+
+Runs `dotnet publish -c Release -r win-x64 --no-self-contained` → creates `SearchZones.zip`.
+
+### CI (AppVeyor)
+
+Defined in `appveyor.yml`:
+- Image: Visual Studio 2022
+- Build: `dotnet publish -c Release -r win-x64 --no-self-contained`
+- Artifact: `Flow.Launcher.Plugin.SearchZones.zip`
+
+---
+
+## 10. Things You Must Know Before Changing Code
+
+### Critical Design Decisions
+
+1. **Single action keyword**: All functionality runs under `sz`. Individual template shortcuts are **not** registered as FL action keywords. `RegisterAllKeywords()` actively **removes** template shortcuts from FL's keyword registry to clean up after an earlier design.
+
+2. **Provider selection is per-query**: `SearchService.SearchAsync()` checks `IsServiceRunning` every call. A user can start/stop Everything mid-session and the plugin adapts. `SearchService` itself is recreated when settings change.
+
+3. **Everything DLL is loaded lazily**: `EnsureDllLoaded()` tries multiple candidates on first use. The DLL path is resolved once and cached via `_dllLoaded` flag. Changing the DLL path setting requires a new `SearchService` instance (which happens via settings save).
+
+4. **`IsServiceRunning` vs `IsAvailable`**: 
+   - `IsAvailable` = Everything process is running (for status display only)
+   - `IsServiceRunning` = DLL loaded AND `Everything_GetMajorVersion() > 0` (for actual search delegation)
+
+5. **All UI text is in German**: Status messages, button labels, and management command outputs use German strings (e.g. "Suchraum", "Ordner", "Einstellungen").
+
+### Potential Gotchas
+
+- **`Everything_SetSearchW` is process-global**: The Everything SDK uses static global state. If another plugin also uses Everything SDK in the same process, calls could interfere. Not currently an issue in practice.
+
+- **WPF DataTemplate named elements**: `FindNamedChild<T>()` walks the visual tree to find named controls inside `DataTemplate` (e.g. `NewFolderValueBox`). WPF doesn't support `x:Name` lookup across `DataTemplate` boundaries, hence the helper.
+
+- **Import without validation**: JSON import deserializes directly into `SearchTemplate` list. Imported templates are not validated for shortcut uniqueness against existing templates or each other — could result in duplicate shortcuts.
+
+- **SQL injection in Windows Index provider**: `EscapeSql()` only escapes single quotes. The provider builds SQL strings via concatenation. While this queries only the local Windows Search Index (not a network database), unusual filenames or search terms with SQL metacharacters could theoretically cause query failures.
+
+- **max 200 results**: Both providers cap at 200. This is hardcoded, not configurable.
+
+- **`cmd.exe /c` for shell commands**: Quick Commands that aren't URLs are executed via `cmd.exe /c <command>`. The command string comes from user-configured settings (not external input), so this is acceptable, but be aware of command injection risk if this ever accepts untrusted input.
+
+- **Process enumeration for Everything detection**: `GetProcessesByName` is called on status checks. This is fine for occasional use but would be expensive if called frequently.
+
+- **Registry access for DLL location**: Uses `HKLM` lookup. May fail without elevation on locked-down systems, but the code catches exceptions.
+
+### Performance Considerations
+
+- Everything SDK search is synchronous (blocks the calling thread) despite the `Task<>` return type. The actual P/Invoke calls happen on the thread pool but aren't truly async.
+- Windows Index provider uses `OleDbConnection.OpenAsync` / `ExecuteReaderAsync` — genuinely async.
+- `BuildPluginCommandItems()` enumerates Start Menu `.lnk` files on every `CreateSettingPanel()` call. Could be slow with many shortcuts but only runs when settings UI is opened.
+
+---
+
+## 11. Technical Reference & Glossary
+
+### Glossary
+
+| Term | Meaning |
+|---|---|
+| **Search Zone / Search Space / Suchraum** | A `SearchTemplate` — a named, shortcut-activated bundle of folder searches, commands, and links |
+| **Template** | Same as Search Zone (internal code name) |
+| **Entry** | A `TemplateEntry` — one item inside a search zone (folder, command, or link) |
+| **Shortcut** | The keyword typed after `sz` to activate a search zone (e.g. `uni`, `dl`, `proj`) |
+| **Action Keyword** | Flow Launcher concept — the first word that routes a query to a plugin. For SearchZones this is always `sz` |
+| **Everything** | [voidtools Everything](https://www.voidtools.com/) — a Windows file search utility with an SDK |
+| **FL** | Flow Launcher |
+| **Quick Command** | An entry that opens a URL or runs a shell command |
+| **Plugin Command** | An entry that switches to another FL plugin or launches a program |
+
+### Key Classes & Functions
+
+| Class / Function | File | Purpose |
 |---|---|---|
-| `ds` | Default Search | Downloads, Desktop, Documents, Pictures, Music, Videos |
-| `dl` | Downloads | `%USERPROFILE%\Downloads` |
-| `doc` | Documents | `%USERPROFILE%\Documents` |
-| `pic` | Pictures | `%USERPROFILE%\Pictures` |
-| `desk` | Desktop | `%USERPROFILE%\Desktop` |
+| `SearchZones` | `Main.cs` | Plugin entry point; implements `IAsyncPlugin`, `IContextMenu`, `ISettingProvider` |
+| `SearchZones.InitAsync()` | `Main.cs#L18` | Loads settings, creates services, runs migrations and seeding |
+| `SearchZones.QueryAsync()` | `Main.cs#L32` | Routes queries to search handling or management commands |
+| `HandleSearchQuery()` | `Main.cs#L48` | Executes folder search + shows commands/links |
+| `HandleManagementQuery()` | `Main.cs#L257` | Dispatches `add`/`del`/`edit`/`settings` commands |
+| `BuildPluginCommandItems()` | `Main.cs#L853` | Gathers FL keywords + Start Menu programs for Settings UI dropdown |
+| `PluginSettings` | `Models/PluginSettings.cs` | Root settings container |
+| `SearchTemplate` | `Models/SearchTemplate.cs` | Search zone definition with entries and filters |
+| `TemplateEntry` | `Models/TemplateEntry.cs` | Single entry + `EntryType` enum |
+| `ISearchProvider` | `Services/ISearchProvider.cs` | Search provider interface + `SearchResult` record |
+| `SearchService` | `Services/SearchService.cs` | Provider selector facade |
+| `EverythingSearchProvider` | `Services/EverythingSearchProvider.cs` | Everything SDK P/Invoke wrapper |
+| `WindowsIndexSearchProvider` | `Services/WindowsIndexSearchProvider.cs` | Windows Search OleDb provider |
+| `TemplateManager` | `Services/TemplateManager.cs` | CRUD, migration, seeding for templates |
+| `SettingPanel` | `UI/SettingPanel.xaml(.cs)` | WPF settings UI with expanders, entry management, import/export |
+
+### NuGet Dependencies
+
+| Package | Version | Purpose |
+|---|---|---|
+| `Flow.Launcher.Plugin` | 4.4.0 | FL plugin SDK (interfaces, API) |
+| `System.Data.OleDb` | 9.0.0 | Windows Search Index access |
+
+### Plugin Manifest (`plugin.json`)
+
+| Field | Value |
+|---|---|
+| ID | `6F84CC74D30945B280A6F567228A5F89` |
+| ActionKeyword | `sz` |
+| Name | `SearchZones` |
+| Language | `csharp` |
+| ExecuteFileName | `Flow.Launcher.Plugin.SearchZones.dll` |
 
 ---
 
-## 8. Assumptions & Open Questions
+## Assumptions & Open Questions
 
-| # | Item | Confidence | Notes |
-|---|---|---|---|
-| A1 | `IPublicAPI.AddActionKeyword` / `RemoveActionKeyword` calls in `SeedDefaults` / `RegisterAllKeywords` are legacy and produce no visible effect to end users since shortcuts are no longer registered as FL keywords | High | Code comment confirms this is intentional cleanup |
-| A2 | The `IcoPath = r.FullPath` in search results relies on Flow Launcher resolving the system icon from the file path | High | Standard FL plugin convention |
-| A3 | `AllowUnsafeBlocks = true` in csproj is required for P/Invoke with `StringBuilder` buffers in Everything provider | High | No actual `unsafe` keyword is used; may be a leftover setting |
-| A4 | `Results` from Everything are not re-sorted — FL's own result ranking may reorder them | Medium | No explicit sort in `HandleSearchQuery()` |
-| O1 | What happens when Everything is installed but `Everything64.dll` cannot be found even after all 5 discovery attempts? | — | Plugin silently falls back to Windows Index; status result warns user |
-| O2 | Are there plans to support per-template exclude or file-type filter editing via the settings panel? | — | The model supports it, but `SettingPanel.xaml` currently only exposes folders and `SearchSubdirectories` |
-| O3 | The `ExcludePatterns` field is fully supported by both search providers but has no UI for editing it via the settings panel | — | Only editable via `sz edit <shortcut> exclude <patterns>` in the command bar |
+| # | Assumption | Confidence |
+|---|---|---|
+| A1 | Only one instance of the plugin runs per FL process | High |
+| A2 | `SavePluginSettings()` writes synchronously and is safe to call from any thread | Medium |
+| A3 | Everything SDK global state won't conflict with other plugins | Medium |
+| A4 | Start Menu `.lnk` enumeration is fast enough for settings UI | Medium |
 
----
-
-*Document covers commit state as of March 2026. Re-run analysis after significant structural changes.*
+| # | Open Question |
+|---|---|
+| Q1 | Should import validate shortcut uniqueness against existing templates? |
+| Q2 | Should the 200-result limit be user-configurable? |
+| Q3 | Is localization (German → English / i18n) planned? |
